@@ -1,0 +1,136 @@
+﻿@inject IJSRuntime JsRuntime;
+
+<div hidden>
+    <img @ref="ImageMap1" src="art/80x80/i000.png" />
+    <img @ref="ImageMap2" src="art/80x80/i002.png" />
+    <img @ref="ImageMap3" src="art/80x80/i003.png" />
+    <img @ref="ImageMap4" src="art/80x80/i004.png" />
+</div>
+
+<div id="canvasHolder" style="position: fixed; width: 100%; height: 100%">
+    <BECanvas Width="600" Height="400" @ref="CanvasRef"></BECanvas>
+</div>
+
+@code {
+    protected BECanvasComponent CanvasRef;
+
+    protected ElementReference ImageMap1;
+    protected ElementReference ImageMap2;
+    protected ElementReference ImageMap3;
+    protected ElementReference ImageMap4;
+
+    private Canvas2DContext ctx;
+
+    private DateTime LastRender = DateTime.Now;
+
+    private double RunningTime;
+    private double Width;
+    private double Height;
+
+
+    private BallState  ballState  = new BallState (100, 100, 30, 2000);
+    private BlapiState blapiState = new BlapiState (100, 0);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            this.ctx = await CanvasRef.CreateCanvas2DAsync();
+            await this.JsRuntime.InvokeAsync<object>("initRenderJS", DotNetObjectReference.Create(this));
+        }
+
+        await base.OnInitializedAsync();
+    }
+
+    [JSInvokable]
+    public void ResizeInBlazor(double width, double height)
+    {
+        this.Width = width - 40;
+        this.Height = height - 100;
+    }
+
+
+    private BallState Step(BallState state, double deltaTime)
+    {
+        var distance = deltaTime * state.Speed;
+
+        var x = state.X + Math.Cos(state.Angle) * distance;
+        var y = state.Y + Math.Sin(state.Angle) * distance;
+
+        var x1 = 0;
+        var y1 = 0;
+        var x2 = this.Width - 2 * state.Radius;
+        var y2 = this.Height - 2 * state.Radius;
+
+        while (state.Direction > 180) state = state with { Direction = state.Direction - 360 };
+        while (state.Direction < -180) state = state with { Direction = state.Direction + 360 };
+
+        if (x > x2)
+        {
+            x = x2 - (x - x2);
+            state = state with { Direction = 180 - state.Direction };
+        }
+        if (x < x1)
+        {
+            x = x1 + (x1 - x);
+            state = state with { Direction = 180 - state.Direction };
+        }
+        if (y > y2 && state.Direction > 0)
+        {
+            y = y2 - (y - y2);
+            state = state with { Direction = -state.Direction };
+        }
+        if (y < 0 && state.Direction < 0)
+        {
+            y = y1 + (y1 - y);
+            state = state with { Direction = -state.Direction };
+        }
+
+        return state with { X = x, Y = y };
+    }
+
+    private BlapiState Step(BlapiState state, double runningTime)
+    {
+        var index = (int)(runningTime * 5);
+        var distance = 100 + index * 2;
+        return state with { Distance = distance, Index = index };
+    }
+
+
+    [JSInvokable]
+    public async ValueTask RenderInBlazor(float timeStamp)
+    {
+        double deltaTime = (DateTime.Now - this.LastRender).TotalSeconds;
+
+        this.RunningTime += deltaTime;
+        this.LastRender = DateTime.Now;
+
+        this.ballState = this.Step(this.ballState, deltaTime);
+        this.blapiState = this.Step(this.blapiState, this.RunningTime);
+
+        double fps = 1.0 / deltaTime;
+
+        await this.ctx.BeginBatchAsync();
+        await this.ctx.ClearRectAsync(0, 0, this.Width, this.Height);
+        await this.ctx.SetFillStyleAsync("#003366");
+        await this.ctx.FillRectAsync(0, 0, this.Width, this.Height);
+        await this.ctx.SetFontAsync("26px Segoe UI");
+        await this.ctx.SetFillStyleAsync("#FFFFFF");
+        await this.ctx.FillTextAsync("Blazor WebAssembly + HTML Canvas", 10, 30);
+        await this.ctx.SetFontAsync("12px consolas");
+        await this.ctx.FillTextAsync($"FPS: {fps:0.000}", 10, 50);
+        await this.ctx.SetStrokeStyleAsync("#FFFFFF");
+
+        var sprite = this.blapiState.GetSprite() switch
+        {
+            1 => this.ImageMap3,
+            2 => this.ImageMap4,
+            _ => this.ImageMap2,
+        };
+
+        await this.ctx.DrawImageAsync(sprite, 100 + this.blapiState.Distance * 4, 100 + this.blapiState.Distance * 1, 80, 80);
+        await this.ctx.DrawImageAsync(this.ImageMap1, this.ballState.X, this.ballState.Y, 80, 80);
+ 
+        await this.ctx.EndBatchAsync();
+    }
+}
